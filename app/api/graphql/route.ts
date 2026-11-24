@@ -1,7 +1,5 @@
-import { yoga } from "@/lib/graphql";
+import { handlePublic } from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const handler = (request: Request) => yoga.fetch(request);
-
-export { handler as GET, handler as POST, handler as OPTIONS };
+export { handlePublic as GET, handlePublic as POST };

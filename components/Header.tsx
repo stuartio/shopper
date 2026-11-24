@@ -23,6 +23,7 @@ export function Header() {
       </Link>
       <nav>
         <Link href="/" data-testid="nav-products">Products</Link>
+        <Link href="/api-docs" data-testid="nav-api">API</Link>
         <Link href="/cart" data-testid="nav-cart">
           Cart (<span data-testid="cart-count">{count}</span>)
         </Link>

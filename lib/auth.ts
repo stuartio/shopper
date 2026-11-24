@@ -15,10 +15,14 @@ export async function verifyToken(token: string): Promise<string | null> {
   }
 }
 
-// Token may come from the session cookie (browser) or an Authorization: Bearer header (API clients).
-export function extractToken(request: Request): string | null {
+// Public GraphQL API: "Authorization: Bearer <api key>".
+export function extractBearer(request: Request): string | null {
   const auth = request.headers.get("authorization");
-  if (auth?.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
+  return auth?.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() || null : null;
+}
+
+// Web UI session cookie.
+export function extractSessionCookie(request: Request): string | null {
   const cookie = request.headers.get("cookie") ?? "";
   for (const part of cookie.split(";")) {
     const [k, ...v] = part.trim().split("=");

@@ -54,7 +54,33 @@ export async function createUser(user: UserRecord) {
   await set(`userid:${user.id}`, user);
 }
 
-export const getUserById = (id: string) => get<UserRecord>(`userid:${id}`);
+export type ApiKeyRecord = { key: string; userId: string; name: string; createdAt: string };
+
+export async function createApiKey(rec: ApiKeyRecord) {
+  await set(`apikey:${rec.key}`, rec);
+  const keys = (await get<string[]>(`apikeys:${rec.userId}`)) ?? [];
+  await set(`apikeys:${rec.userId}`, [rec.key, ...keys]);
+}
+
+export const getApiKey = (key: string) => get<ApiKeyRecord>(`apikey:${key}`);
+
+export async function listApiKeys(userId: string) {
+  const keys = (await get<string[]>(`apikeys:${userId}`)) ?? [];
+  const recs = await Promise.all(keys.map((k) => getApiKey(k)));
+  return recs.filter((r): r is ApiKeyRecord => !!r);
+}
+
+export async function deleteApiKey(userId: string, key: string) {
+  const rec = await getApiKey(key);
+  if (!rec || rec.userId !== userId) return false;
+  const db = load();
+  delete db[`apikey:${key}`];
+  db[`apikeys:${userId}`] = ((db[`apikeys:${userId}`] as string[]) ?? []).filter((k) => k !== key);
+  fs.writeFileSync(FILE, JSON.stringify(db, null, 2));
+  return true;
+}
+
+export const getUserById =(id: string) => get<UserRecord>(`userid:${id}`);
 
 export async function saveOrder(order: OrderRecord) {
   await set(`order:${order.id}`, order);

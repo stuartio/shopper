@@ -74,7 +74,7 @@ export const PRODUCTS: Product[] = Object.entries(RAW).flatMap(([category, items
       category,
       priceCents,
       description: `${name} from our ${category} range. A solid pick for everyday use.`,
-      imageUrl: `/images/${id}`,
+      imageUrl: `/products/${id}.jpg`,
     };
   }),
 );
