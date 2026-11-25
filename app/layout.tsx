@@ -12,7 +12,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <Providers>
           <Header />
           <main>{children}</main>
-          <footer className="footer">Shopper is a test application. No real payments are taken.</footer>
+          <footer className="footer">
+            Shopper is a test application. No real payments are taken.
+            <div data-testid="app-version">
+              v{process.env.NEXT_PUBLIC_APP_VERSION} · commit {process.env.NEXT_PUBLIC_COMMIT}
+            </div>
+          </footer>
         </Providers>
       </body>
     </html>
