@@ -1,5 +1,5 @@
-import { createSchema, createYoga, type Plugin } from "graphql-yoga";
-import { GraphQLError } from "graphql";
+import { makeExecutableSchema } from "@graphql-tools/schema";
+import { GraphQLError, graphql, type GraphQLSchema } from "graphql";
 import bcrypt from "bcryptjs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { CATEGORIES, getProduct, listProducts } from "./catalog";
@@ -252,16 +252,7 @@ const webResolvers = {
   },
 };
 
-// Lets resolvers set a Set-Cookie header on the HTTP response.
-const cookiesByRequest = new WeakMap<Request, string[]>();
-
-const cookiePlugin: Plugin = {
-  onResponse({ request, response }) {
-    for (const c of cookiesByRequest.get(request) ?? []) response.headers.append("Set-Cookie", c);
-  },
-};
-
-function makeYoga(mode: Mode) {
+function makeSchema(mode: Mode): GraphQLSchema {
   const resolvers =
     mode === "web"
       ? {
@@ -269,45 +260,81 @@ function makeYoga(mode: Mode) {
           Mutation: { ...shopResolvers.Mutation, ...webResolvers.Mutation },
         }
       : shopResolvers;
-
-  return createYoga<object, Ctx>({
-    schema: createSchema({ typeDefs: typeDefsFor(mode), resolvers }),
-    graphqlEndpoint: mode === "web" ? "/api/web/graphql" : "/api/graphql",
-    graphiql: false,
-    fetchAPI: { Response },
-    plugins: [cookiePlugin],
-    maskedErrors: false,
-    context: async ({ request }): Promise<Ctx> => {
-      const cookies: string[] = [];
-      cookiesByRequest.set(request, cookies);
-      let userId: string | null = null;
-      if (mode === "public") {
-        const key = extractBearer(request);
-        userId = key ? ((await getApiKey(key))?.userId ?? null) : null;
-      } else {
-        const token = extractSessionCookie(request);
-        userId = token ? await verifyToken(token) : null;
-      }
-      return { user: userId ? await getUserById(userId) : null, setCookie: (v) => cookies.push(v) };
-    },
-  });
+  return makeExecutableSchema({ typeDefs: typeDefsFor(mode), resolvers });
 }
 
-const g = globalThis as unknown as { __yoga?: Record<Mode, ReturnType<typeof makeYoga>> };
-const instances = (g.__yoga ??= { public: makeYoga("public"), web: makeYoga("web") });
+const g = globalThis as unknown as { __schemas?: Record<Mode, GraphQLSchema> };
+const schemas = (g.__schemas ??= { public: makeSchema("public"), web: makeSchema("web") });
 
-export const webYoga = instances.web;
+const json = (body: unknown, status = 200, extra: [string, string][] = []) => {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const [k, v] of extra) headers.append(k, v);
+  return new Response(JSON.stringify(body), { status, headers });
+};
 
-const unauthorized = (message: string) =>
-  new Response(JSON.stringify({ errors: [{ message, extensions: { code: "UNAUTHENTICATED" } }] }), {
-    status: 401,
-    headers: { "Content-Type": "application/json", "WWW-Authenticate": 'Bearer realm="shopper"' },
+const errorResponse = (message: string, code: string, status: number, extra: [string, string][] = []) =>
+  json({ errors: [{ message, extensions: { code } }] }, status, extra);
+
+// Parses a GraphQL-over-HTTP request ourselves (JSON POST body, or query-string GET) and executes it with graphql-js.
+// This deliberately avoids server frameworks' body handling, which misbehaved on Vercel.
+async function execute(mode: Mode, request: Request): Promise<Response> {
+  let query: string | undefined;
+  let variables: Record<string, unknown> | undefined;
+  let operationName: string | undefined;
+
+  if (request.method === "POST") {
+    let body: { query?: unknown; variables?: unknown; operationName?: unknown };
+    try {
+      body = JSON.parse(await request.text());
+    } catch {
+      return errorResponse("Request body must be JSON: {\"query\": \"...\", \"variables\": {...}}", "BAD_REQUEST", 400);
+    }
+    if (typeof body?.query === "string") query = body.query;
+    if (body?.variables && typeof body.variables === "object") variables = body.variables as Record<string, unknown>;
+    if (typeof body?.operationName === "string") operationName = body.operationName;
+  } else {
+    const u = new URL(request.url).searchParams;
+    query = u.get("query") ?? undefined;
+    operationName = u.get("operationName") ?? undefined;
+    try {
+      variables = u.get("variables") ? JSON.parse(u.get("variables")!) : undefined;
+    } catch {
+      return errorResponse("variables must be valid JSON", "BAD_REQUEST", 400);
+    }
+  }
+  if (!query) return errorResponse("Must provide query string.", "BAD_REQUEST", 400);
+
+  const cookies: string[] = [];
+  let userId: string | null = null;
+  if (mode === "public") {
+    const key = extractBearer(request);
+    userId = key ? ((await getApiKey(key))?.userId ?? null) : null;
+  } else {
+    const token = extractSessionCookie(request);
+    userId = token ? await verifyToken(token) : null;
+  }
+  const ctx: Ctx = { user: userId ? await getUserById(userId) : null, setCookie: (v) => cookies.push(v) };
+
+  const result = await graphql({
+    schema: schemas[mode],
+    source: query,
+    variableValues: variables,
+    operationName,
+    contextValue: ctx,
   });
+  return json(result, 200, cookies.map((c) => ["Set-Cookie", c]));
+}
+
+export const handleWeb = (request: Request) => execute("web", request);
 
 // Public endpoint: reject anything without a valid API key before it reaches GraphQL.
 export async function handlePublic(request: Request): Promise<Response> {
   const key = extractBearer(request);
-  if (!key) return unauthorized("Missing API key. Send 'Authorization: Bearer <your API key>'.");
-  if (!(await getApiKey(key))) return unauthorized("Invalid API key.");
-  return instances.public.fetch(request);
+  if (!key)
+    return errorResponse("Missing API key. Send 'Authorization: Bearer <your API key>'.", "UNAUTHENTICATED", 401, [
+      ["WWW-Authenticate", 'Bearer realm="shopper"'],
+    ]);
+  if (!(await getApiKey(key)))
+    return errorResponse("Invalid API key.", "UNAUTHENTICATED", 401, [["WWW-Authenticate", 'Bearer realm="shopper"']]);
+  return execute("public", request);
 }
