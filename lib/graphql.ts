@@ -281,11 +281,15 @@ async function execute(mode: Mode, request: Request): Promise<Response> {
   let query: string | undefined;
   let variables: Record<string, unknown> | undefined;
   let operationName: string | undefined;
+  let seen = `method=${request.method}`;
 
   if (request.method === "POST") {
     let body: { query?: unknown; variables?: unknown; operationName?: unknown };
     try {
-      body = JSON.parse(await request.text());
+      const raw = await request.text();
+      seen += `, content-type=${request.headers.get("content-type")}, body=${raw.length} bytes`;
+      body = JSON.parse(raw);
+      seen += `, body keys=[${Object.keys(body ?? {}).join(",")}]`;
     } catch {
       return errorResponse("Request body must be JSON: {\"query\": \"...\", \"variables\": {...}}", "BAD_REQUEST", 400);
     }
@@ -294,6 +298,7 @@ async function execute(mode: Mode, request: Request): Promise<Response> {
     if (typeof body?.operationName === "string") operationName = body.operationName;
   } else {
     const u = new URL(request.url).searchParams;
+    seen += `, url=${new URL(request.url).pathname}${new URL(request.url).search.slice(0, 80)}`;
     query = u.get("query") ?? undefined;
     operationName = u.get("operationName") ?? undefined;
     try {
@@ -302,7 +307,7 @@ async function execute(mode: Mode, request: Request): Promise<Response> {
       return errorResponse("variables must be valid JSON", "BAD_REQUEST", 400);
     }
   }
-  if (!query) return errorResponse("No GraphQL query found in the request.", "BAD_REQUEST", 400);
+  if (!query) return errorResponse(`No GraphQL query found in the request (server saw: ${seen}).`, "BAD_REQUEST", 400);
 
   const cookies: string[] = [];
   let userId: string | null = null;
