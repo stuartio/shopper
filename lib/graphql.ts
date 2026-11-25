@@ -302,7 +302,7 @@ async function execute(mode: Mode, request: Request): Promise<Response> {
       return errorResponse("variables must be valid JSON", "BAD_REQUEST", 400);
     }
   }
-  if (!query) return errorResponse("Must provide query string.", "BAD_REQUEST", 400);
+  if (!query) return errorResponse("No GraphQL query found in the request.", "BAD_REQUEST", 400);
 
   const cookies: string[] = [];
   let userId: string | null = null;
